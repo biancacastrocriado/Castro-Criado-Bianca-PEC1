@@ -1,0 +1,12 @@
+---
+title: "PEC1"
+author: "Bianca Teresa Castro Criado"
+date: "2025-03-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##
