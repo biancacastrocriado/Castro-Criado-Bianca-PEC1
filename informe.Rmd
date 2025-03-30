@@ -1,12 +1,243 @@
 ---
-title: "PEC1"
+title: "Prova de d'avaluación continua 1"
 author: "Bianca Teresa Castro Criado"
-date: "2025-03-22"
-output: html_document
+date: '`r format(Sys.Date(), "%d/%m/%Y")`'
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+lang: es
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-##
+
+## Resum
+
+Aquest informe presenta una anàlisi de dades de fosfoproteòmica de dos tipus de tumors (MSS I PD),  el qual es centra en la seva organització, exploració i interpretació. Primer, s'ha seleccionat un conjunt de dades i s'ha estructurat en un objecte SummarizedExperiment, facilitant-ne la gestió i l’anàlisi. A continuació, s'han aplicat tècniques d’anàlisi exploratòria, incloent la normalització i la visualització mitjançant PCA, per identificar patrons i variabilitat en les dades. Els resultats obtinguts proporcionen informació sobre la distribució i característiques de les mostres. S’ha conclòs que els pèptids son deferents pels dos tipus de tumors. 
+
+
+## Objectius
+
+L'objectiu principal d'aquest treball és realitzar una anàlisi de les dades mitjançant eines bioinformàtiques i estadístiques, amb la finalitat d'obtenir coneixements rellevants sobre el conjunt de dades proporcionat. Concretament, es busca:
+
+* Explorar les dades i identificar patrons significatius.
+
+* Aplicar tècniques estadístiques per validar resultats.
+
+* Integrar codi i anàlisi en un document clar i estructurat.
+
+
+## Mètodes
+
+Les dades escollides són aquelles recollides a l'arxiu *TIO2+PTYR-human-MSS+MSIvsPD* del repositori de GitHub proporcionat. Les dades provenen de un experiment de fosfoproteòmica que ha analitzat (3 + 3) models PDX de dos subtipus diferents de tumors mitjançant mostres enriquides en fosfopèptids. L'anàlisi es va dur a terme mitjançant LC-MS, amb 2 rèpliques tècniques per mostra. El conjunt de resultats consisteix en abundàncies normalitzades dels senyals de MS per a aproximadament 1400 fosfopèptids.
+
+Tant ExpressionSet com SummarizedExperiment són clases emprades per gestionar dades òmiques, i tot i compartir algunes similituds, presenten diferències importants en flexibilitat i aplicació. ExpressionSet, que forma part del paquet Biobase i és més antic, conté tres components principals: exprs() per a la matriu d'expressió (valors de senyal gènic, proteic,  RNA, etc), pData() per a les metadades de les mostres i fData() per a les metadades de la unitat biológica/anotacions. És adequat per a dades d'expressió tradicionals (microarrays o RNA-seq senzills), però és limitat per a dades complexes, ja que no permet gestionar múltiples matrius ni nivells de dades. En canvi, SummarizedExperiment, que és més recent que l'ExpressionSet, ofereix una estructura més flexible amb assays() per emmagatzemar una o més matrius d'expressió, colData() per a metadades de mostres, rowData() per a metadades de característiques i metadata() per informació addicional. Això el fa ideal per a dades obtingudes per metodologies més complexes, ja que permet gestionar múltiples tipus de dades.
+
+A continuació es detalla el procés de creació d'un SummarizedExperiment:
+
+```{r, echo=TRUE, eval=TRUE}
+library(readxl)
+library(SummarizedExperiment)
+
+# Primer s'importen les dades i s'assignen a una variable
+dades <- "/Users/biancacastrocriado/Desktop/metaboData/Datasets/2018-Phosphoproteomics/TIO2+PTYR-human-MSS+MSIvsPD.XLSX"
+
+# Després, com a l'arxiu hi ha dos fulls, s'assigna al primer d'ells la ruta a l'arxiu
+# excel amb les dades de la matriu i anotacions sobre els fosfopèptids. 
+# A la variable dades_mostres s'assignen les dades relatives a les mostres.
+
+primer_full <- read_excel(dades, sheet = "originalData")
+metadata_mostres <- read_excel(dades, sheet = "targets")
+
+# Llavors es crea primer el dataframe que es passarà a la funció SummarizedExperiment
+# per crear l'objecte i que contrindrà la  ColData que, com s'ha mencionat anteriorment,
+# emmagatzema la informació relativa a les mostres, que es la informació que es troba 
+# a les columnes i que ve determinada per la perosna invetigadora (son les metadades 
+# de la mostra).
+print(metadata_mostres)
+
+# Com es pot observar, la colData conté dades sobre les mostres per duplicat.
+# On la primera columna conté el nom de la mostra que hauria de coincidir amb el nom
+# de les columnes de l'Assay (matriu de dades). Si s'exploren els noms de les columnes
+# que representen les mostres (més les anotacions):
+
+colnames(primer_full)
+
+# Es pot comprovar que no coincideixen. Per tant, es canvia el format de la columna
+# per que coincideixi.
+metadata_mostres$`Sample...1` <- 
+  paste0(metadata_mostres$`Sample...1`, "_", metadata_mostres$Phenotype)
+colnames(metadata_mostres)[colnames(metadata_mostres) == "Sample...2"] <- "sample"
+
+# S'assigna com a nom de les mostres l'informació continguda a Sample...1
+metadata_mostres <- as.data.frame(metadata_mostres)
+rownames(metadata_mostres) <- metadata_mostres$`Sample...1`
+metadata_mostres$`Sample...1` <- NULL
+
+# Atès que l'experiment és de fosfoproteòmica la unitat biològica de cada fila són 
+# fosfopèptids, les files s'han d'identificar per un identificador únic per a cada 
+# fosfopèptid. Respecte a les columnes del dataset, cap de les variables sembla adequada
+# com a identificador. Això és deguta a que, per exemple, SequenceModifications conté la 
+# seqüència del pèptid juntament amb les seves modificacions post-traduccionals, informació
+# que seria més adequada per la secció rowData. La variable description tampoc seria una 
+# bona opció perquè moltes files tenen la mateixa descripció, ja que diversos fosfopèptids
+# poden provenir de la mateixa proteïna. De la mateixa manera, accesion es el número 
+# identidicatiu a Uniprot de la proteïna que pot patir una modificació post-traduccional a 
+# un dels seus pèptids, pel que tampoc seria adequada. Per tant, primer es crea el 
+# dataframe de rowData (que inclou anotacions sobre el pèptid en qüestió, que seria 
+# el metadata dels pèptids).
+
+# Primer s'ha de crear un vector que contingui els identificadors dels pèptids. 
+# Aquest vector será tan llarg com pèptids hi hagi.
+
+peptide_names <- paste0("peptide ", seq_len(nrow(primer_full)))
+
+# Després, es crea el dataframe que contidrá l'assay data, que serán les dades 
+# numériques de l'abundància normalitzada de la senyal MS dels pèptids.
+# També s''assgna com a nom de les files l'identificador dels pèptids.
+assay_data <- data.frame(primer_full[5:16], row.names = peptide_names)
+
+# Se segueix el mateix procediment per crear la secció de les anotacions, 
+# on s'emmagatzemarà la informació de SequenceModification, el accesion number, 
+# description, Score (elque ha de ser una mètrica de qualitat d'identificació 
+# del fosfopèptid a l'espectrometria de masses), la classe i l'aminoàcid on succeeix
+# la fosforilació. A tots aquests també se'ls assigna un identificador del pèptid. 
+# També s'assigna a les files el nom que es troba a la variable peptide_names.
+
+metadata_peptides <- data.frame(primer_full[c(1:4,17,18)], row.names = peptide_names)
+
+# Es crea l’objecte SummarizedExperiment
+se <- SummarizedExperiment(
+  assays = list(counts = assay_data),
+  colData = metadata_mostres,
+  rowData = metadata_peptides
+)
+
+se
+
+# S'explora l’objecte SummarizedExperiment
+# Resum de l’objecte
+print(se)
+# Matriu de dades
+head(assay(se))
+# Metadades de les anotacions
+head(rowData(se))
+# Metadades de les mostres
+colData(se)    
+```
+```{r, echo=TRUE, eval=TRUE}
+#Es guarden les dades en els formats especificats a l'enunciat:
+#Summarizedexperiment:
+save(se, file = "SummarizedExperiment_phospho.Rda")
+#Per carregar-ho posteriorment en un altre arxiu: load("SummarizedExperiment_phospho.Rda")
+
+# Dades en format .txt amb separador tabulador. Es crea un .txt per acada tipus de dades
+write.table(assay(se), file = "assay_data.txt", sep = "\t", row.names = TRUE, quote = FALSE)
+write.table(rowData(se), file = "peptide_metadata.txt", sep = "\t", row.names = TRUE, quote = FALSE)
+write.table(colData(se), file = "samples_metadata.txt", sep = "\t", row.names = TRUE, quote = FALSE)
+```
+
+```{r, echo=TRUE, eval=TRUE}
+# Es crea l'arxiu markdown amb la descripció de les dades
+cat("# Metadades de l'experiment\n
+Aquest arxiu acompanya les dades exportades.\n
+## arxius:\n
+- assay_data.txt: Matriu d'abundància dels pèptids amb les dades quantitatives.\n
+- peptide_metadata.txt: Metadades relatives a les mostres, que inclou: el nom de la
+mostra, l'individu i el fenotip\n
+- samples_metadata.txt: Metadades dels pèptids, que inclouen el accesion number
+de Uniprot, la seqüència dels pèptids, la descripció de la proteïna on es troba aquest
+pèptid, l'Score, la clase y l'aminoàcid on succeeix la fosforilació.\n
+", file = "metadades.md")
+```
+
+Anàlisi estadístic:
+
+```{r, echo=TRUE, eval=TRUE}
+summary(assay(se))
+```
+
+
+
+```{r, echo=TRUE, eval=TRUE}
+library(ggplot2)
+library(tidyr)
+
+# S'aplica una transformació logarítmica, ja que Les dades tenen una distribució 
+# molt asimètrica, amb valors mínims de 0 i màxims que arriben a desenes de milions. 
+# Això fa que la distribució estigui fortament esbiaixada a la dreta (molts valors petits
+# i uns pocs valors molt grans). L’aplicació del logaritme ajuda a reduir aquest 
+# efecte i a fer que la distribució sigui més propera a una normal
+dades <- as.data.frame(log10(assay(se) + 1))  
+
+# Es traspossa la matriu perquè cada columna sigui una fila
+dades <- t(dades)  
+dades <- as.data.frame(dades)
+
+# S'agrega la información de  les mostres desde colData
+dades$Mostra <- colData(se)$sample  # Ajusta "sample" según el nombre correcto en colData(se)
+
+# La següent línia transforma dades de format ample a llarg, de manera que converteix 
+# les columnes de pèptids en files. Manté la variable Mostra fixa, crea una columna "Feature" 
+# amb els noms dels pèptids i una columna "Abundància" amb els valors corresponents. 
+# Així, cada fila representa una combinació de mostra, pèptid i abundància, el que facilita
+# la creació del boxplot.
+dades_long <- pivot_longer(dades, cols = -Mostra, names_to = "Feature", values_to = "Abundància")
+
+
+ggplot(dades_long, aes(x = Mostra, y = Abundància)) +
+  geom_boxplot() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Distribució de l’abundància de pèptids per mostra", 
+       x = "Mostres", 
+       y = "Abundància (log10)")
+
+```
+Tal i com es comenta al arxiu que descriu les dades de l'arxiu original, l'objectiu de les dades és buscar fosfopèptids que permetin la diferenciació de dos grups tumorals. Per tal de fer això es pot recórrer a tècniques com el PCA. 
+
+
+```{r, echo=TRUE, eval=TRUE}
+# Primer ha d'extreure's la matriu d'abundàncies
+abundances <- assay(se)
+matriu <- as.matrix(log10(abundances + 1))
+
+# Es calcula el PCA
+pca_res <- prcomp(t(matriu), scale. = FALSE)  
+
+# Es crea un dataframe amb les dades i s'hi afegeixen els noms de la mostra i el 
+# fenotip/tipus de tumor. Les metadates s'extreuen directament de l'objecte SummarizedExperiment
+pca_data <- as.data.frame(pca_res$x)
+pca_data$Sample <- colnames(abundances) 
+pca_data$Phenotype <- colData(se)$Phenotype  
+
+ggplot(pca_data, aes(x = PC1, y = PC2, color = Phenotype, label = Sample)) +
+  geom_point(size = 3.5) +
+  geom_text(vjust = -1, size = 3) +
+  theme_minimal() +
+  ggtitle("Phosphoproteomic data") +
+  labs(x = "PC1", y = "PC2")
+
+```
+
+
+## Resultats
+
+L'anàlisi estadística descriptiva mostra una gran variabilitat en l'abundància, amb valors mínims de 0 i màxims que arriben als milions. Aquesta àmplia dispersió suggereix la presència d'alguns pèptids altament abundants juntament amb molts de baixa abundància. A més, la mitjana és significativament superior a la mediana en totes les mostres, indicant una distribució esbiaixada cap a la dreta amb valors extrems que influeixen en la mitjana. També s'observen diferències entre les mostres, amb les etiquetades com a PD mostrant en general valors mitjans i màxims més elevats en comparació amb les MSS, fet que podria reflectir diferències biològiques o experimentals. A més, la presència de valors mínims de 0 en totes les mostres indica que alguns pèptids no han estat detectats en determinades condicions. Es fa una representació de les dades per captar aquesta variabilitat.
+
+Confirmant el que s'ha dit abans, en el boxplot s'observa una gran variabilitat en l'abundància, amb valors mínims propers a 0 i màxims molt elevats. L'existència de valors extrems indica la presència de pèptids altament abundants en algunes mostres. Les medianes són relativament similars entre les mostres. 
+
+El gràfic PCA mostra una clara separació entre els grups MSS i PD, el que indica que les seves signatures fosfoproteòmiques són diferents. Els punts que representen les mostres MSS (en vermell) es troben agrupats de manera més compacta, el que suggereix que aquest grup és més homogeni en termes de variació molecular. D’altra banda, les mostres del grup PD (en blau) es dispersen més al llarg dels eixos principals, cosa que indica una major heterogeneïtat dins d’aquest grup. Aquesta variabilitat en el grup PD podria estar relacionada amb patrons de fosforilació més versàtils dins d’aquest tipus de tumor, o bé amb una resposta diferencial a factors externs com ara el tractament o l'estat del turmor en relació a la fase clínica de la malaltia. La distribució dels punts també suggereix que la primera component principal és la que captura la major part de la variació entre els dos grups, mentre que la segona component  podria estar reflectint diferències individuals dins de cada grup.
+
+## Discussió
+
+Els resultats obtinguts a partir de l'anàlisi de fosfoproteòmica permeten identificar patrons diferencials en les mostres analitzades. Aquests patrons en un context biològic indiquen possibles vies de regulació diferencial sorgides de la diferència entre tumors en la fosforilació dels pèptids.  L'anàlisi està subjecta a diverses limitacions, incloent la qualitat i el pretractament de les dades. La presència de valors extrems poden haver influït en els resultats. A més, la selecció del mètode de normalització pot haver afectat la interpretació de les diferències observades entre grups experimentals. Per millorar la robustesa de l’anàlisi, es podria augmentar la mida de la mostra i aplicar tècniques avançades de machine learning per detectar patrons més complexos. A més, es podrien integrar altres fonts de dades òmiques per proporcionar una visió més completa dels mecanismes biològics subjacents.
+
+## Referències
+
+[Repositori de Github](https://github.com/biancacastrocriado/Castro-Criado-Bianca-PEC1)
+
